@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/prisma/generated"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id String @id
+
+  workspaces Workspace[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt()
+}
+
+enum WorkspaceContainerState {
+  WaitingForCreation
+  Creating
+  Stopped
+  Starting
+  Running
+  Stopping
+  Deleting
+  Deleted
+}
+
+model WorkspaceContainer {
+  id String @id
+  dockerContainerId String?
+  state WorkspaceContainerState
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String @unique
+}
+
+model Workspace {
+  id String @id
+  name String 
+
+  user User @relation(fields: [userId], references: [id])
+  userId String
+
+  workspaceContainer WorkspaceContainer?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt()
+}
