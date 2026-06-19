@@ -1,10 +1,26 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from './prisma/prisma.module';
+import { PrismaModule } from './modules/prisma/prisma.module';
 import { WorkspaceModule } from './routes/workspace/workspace.module';
 import { AuthModule } from './common/auth/auth.module';
 import { UsersModule } from './routes/users/users.module';
+import { BullModule } from '@nestjs/bullmq';
+import { OrchestratorConfig } from './config';
+import { DockerModule } from './modules/docker/docker.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, UsersModule, WorkspaceModule],
+  imports: [
+    PrismaModule,
+    DockerModule,
+    BullModule.forRoot({
+      connection: {
+        host: OrchestratorConfig.redis.host,
+        port: OrchestratorConfig.redis.port,
+        password: OrchestratorConfig.redis.password,
+      },
+    }),
+    AuthModule,
+    UsersModule,
+    WorkspaceModule,
+  ],
 })
 export class AppModule {}

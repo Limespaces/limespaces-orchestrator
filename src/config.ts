@@ -1,5 +1,9 @@
 export const OrchestratorConfig = {
-  corsAllowedOrigins: (process.env.CORS_ORIGINS ?? process.env.DASHBOARD_ORIGIN ?? '').split(','),
+  corsAllowedOrigins: (
+    process.env.CORS_ORIGINS ??
+    process.env.DASHBOARD_ORIGIN ??
+    ''
+  ).split(','),
   oidc: {
     audience: process.env.OIDC_AUDIENCE ?? '',
     issuer: process.env.OIDC_ISSUER ?? '',
@@ -7,5 +11,11 @@ export const OrchestratorConfig = {
     requiredRealmRole: process.env.OIDC_REQUIRED_REALM_ROLE ?? '',
     requiredClientRole: process.env.OIDC_REQUIRED_CLIENT_ROLE ?? '',
     clientId: process.env.OIDC_CLIENT_ID ?? 'limespaces-dashboard-devel',
+  },
+
+  redis: {
+    host: 'redis',
+    port: 6379,
+    password: process.env.REDIS_PASSWORD ?? '',
   },
 };
