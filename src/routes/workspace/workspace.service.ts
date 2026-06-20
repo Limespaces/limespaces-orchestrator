@@ -20,6 +20,8 @@ import { WorkspaceContainerState } from 'src/modules/prisma/generated/enums';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { DockerService } from 'src/modules/docker/docker.service';
+import { Observable } from 'rxjs';
+import { EventsService } from 'src/modules/events/events.service';
 
 @Injectable()
 export class WorkspaceService implements OnApplicationBootstrap {
@@ -30,6 +32,7 @@ export class WorkspaceService implements OnApplicationBootstrap {
     private readonly dockerService: DockerService,
     @InjectQueue('workspace')
     private readonly workspaceQueue: Queue,
+    private readonly eventsService: EventsService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -188,6 +191,34 @@ export class WorkspaceService implements OnApplicationBootstrap {
     return {};
   }
 
+  // --- sse ---
+  async events(
+    user: IUser,
+    workspaceId: string,
+  ): Promise<Observable<MessageEvent>> {
+    if (!user || !user.id)
+      throw new InternalServerErrorException('ASSERT: No user');
+
+    const workspace = await this.prismaService.workspace.findUnique({
+      where: {
+        id: workspaceId,
+        user: {
+          id: user.id,
+        },
+      },
+      include: {
+        user: true,
+        workspaceContainer: true,
+      },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const channel = `users:${workspace.user.id}:workspaces:${workspace.id}`;
+    const sseChannel = this.eventsService.createSseChannel(channel);
+
+    return sseChannel;
+  }
+
   // --- jobs ---
   async $workspaceContainerCreate(workspaceId: string) {
     const workspace = await this._getWorkspaceById(workspaceId);
@@ -195,6 +226,12 @@ export class WorkspaceService implements OnApplicationBootstrap {
     await this._setWorkspaceContainerState(
       workspace.workspaceContainer.id,
       WorkspaceContainerState.Creating,
+    );
+
+    const eventsChannel = this.eventsService.getChannel(
+      workspace.user.id,
+      'workspace',
+      workspace.id,
     );
 
     try {
@@ -217,13 +254,15 @@ export class WorkspaceService implements OnApplicationBootstrap {
         },
       });
 
-      // TODO: Broadcast SSE event
+      await this.eventsService.emit(eventsChannel, 'workspaceUpdate', {});
     } catch (e) {
       // TODO: Should probably replace with error state
       await this._setWorkspaceContainerState(
         workspace.workspaceContainer.id,
         'WaitingForCreation',
       );
+
+      await this.eventsService.emit(eventsChannel, 'workspaceUpdate', {});
 
       throw e;
     }
@@ -249,6 +288,13 @@ export class WorkspaceService implements OnApplicationBootstrap {
     await this.dockerService.startContainer(
       workspace.workspaceContainer.dockerContainerId,
     );
+
+    const eventsChannel = this.eventsService.getChannel(
+      workspace.user.id,
+      'workspace',
+      workspace.id,
+    );
+    await this.eventsService.emit(eventsChannel, 'workspaceUpdate', {});
   }
 
   async $workspaceContainerStop(workspaceId: string) {
@@ -270,6 +316,13 @@ export class WorkspaceService implements OnApplicationBootstrap {
     await this.dockerService.stopContainer(
       workspace.workspaceContainer.dockerContainerId,
     );
+
+    const eventsChannel = this.eventsService.getChannel(
+      workspace.user.id,
+      'workspace',
+      workspace.id,
+    );
+    await this.eventsService.emit(eventsChannel, 'workspaceUpdate', {});
   }
 
   // --- internal ---
