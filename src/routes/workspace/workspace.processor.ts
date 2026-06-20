@@ -16,8 +16,16 @@ export class WorkspaceProcessor extends WorkerHost {
 
     try {
       switch (job.name) {
-        case 'createContainer':
-          this.workspaceService.$createContainer(job.data);
+        case 'workspace:container:create':
+          this.workspaceService.$workspaceContainerCreate(job.data);
+          break;
+
+        case 'workspace:container:start':
+          this.workspaceService.$workspaceContainerStart(job.data);
+          break;
+
+        case 'workspace:container:stop':
+          this.workspaceService.$workspaceContainerStop(job.data);
           break;
 
         default:

@@ -16,10 +16,6 @@ export class DockerProcessor extends WorkerHost {
 
     try {
       switch (job.name) {
-        case 'pullWorkspaceImage':
-          await this.dockerService.$pullWorkspaceImage(job.data);
-          break;
-
         default:
           throw new Error(
             `Job "${job.name}" not found for "${job.queueName}" queue`,

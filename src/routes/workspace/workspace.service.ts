@@ -2,13 +2,16 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { PrismaService } from 'src/modules/prisma/prisma.service';
 import {
   Dto_Workspace_Create,
   Dto_Workspace_Get,
   Dto_Workspace_GetAll,
+  EWorkspaceContainerState,
   WorkspaceCreateRequestDto,
 } from '@limespaces/shared';
 import { IUser } from 'src/common/user.decorator';
@@ -19,7 +22,9 @@ import { Queue } from 'bullmq';
 import { DockerService } from 'src/modules/docker/docker.service';
 
 @Injectable()
-export class WorkspaceService {
+export class WorkspaceService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(WorkspaceService.name);
+
   constructor(
     private readonly prismaService: PrismaService,
     private readonly dockerService: DockerService,
@@ -27,9 +32,56 @@ export class WorkspaceService {
     private readonly workspaceQueue: Queue,
   ) {}
 
+  async onApplicationBootstrap() {
+    await this.ensureRunningContainerNetworking();
+  }
+
+  // --- bootstrap ---
+  /**
+   * This ensures that traefik is connected to all of the running containers' network.
+   * This is to fix one specific case -- backend restarts while there are still running containers.
+   * Other cases are handled when container is starting.
+   */
+  async ensureRunningContainerNetworking() {
+    const containers = await this.dockerService.findAllWorkspaceContainers();
+    const runningIds = containers
+      .filter((c) => c.state.Running)
+      .map((c) => c.id);
+
+    for (const id of runningIds) {
+      if (!id) continue;
+
+      const workspaceContainer =
+        await this.prismaService.workspaceContainer.findFirst({
+          where: {
+            dockerContainerId: id,
+          },
+          include: {
+            workspace: true,
+          },
+        });
+
+      // TODO: Should probably delete the container -- orphan
+      if (!workspaceContainer) continue;
+
+      const fullContainerName = this.dockerService.localToFullName(
+        'workspace',
+        workspaceContainer.workspace.id,
+      );
+      const networkName = `${fullContainerName}-net`;
+      const fullTraefikName = this.dockerService.localToFullName(
+        'platform',
+        'traefik',
+      );
+
+      await this.dockerService.joinNetwork(fullTraefikName, networkName);
+    }
+  }
+
+  // --- rest api ---
   async getAll(user: IUser): Promise<Dto_Workspace_GetAll[]> {
     if (!user || !user.id)
-      throw new InternalServerErrorException('ASSERT: No user/user id');
+      throw new InternalServerErrorException('ASSERT: No user');
 
     const workspaces = await this.prismaService.workspace.findMany({
       where: {
@@ -38,7 +90,7 @@ export class WorkspaceService {
         },
       },
       include: {
-        workspaceContainer: true,
+        user: true,
       },
     });
 
@@ -46,8 +98,6 @@ export class WorkspaceService {
   }
 
   async get(user: IUser, workspaceId: string): Promise<Dto_Workspace_Get> {
-    if (!workspaceId)
-      throw new InternalServerErrorException('ASSERT: No workspace id');
     if (!user || !user.id)
       throw new InternalServerErrorException('ASSERT: No user');
 
@@ -59,13 +109,27 @@ export class WorkspaceService {
         },
       },
       include: {
-        workspaceContainer: true,
         user: true,
+        workspaceContainer: true,
       },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    return new Dto_Workspace_Get(workspace);
+    let state: string = 'unknown';
+    if (workspace.workspaceContainer?.dockerContainerId)
+      state =
+        (await this.dockerService.getContainerState(
+          workspace.workspaceContainer.dockerContainerId,
+        )) ?? 'unknown';
+
+    return new Dto_Workspace_Get({
+      ...workspace,
+      workspaceContainer: {
+        ...workspace.workspaceContainer!,
+        state: workspace.workspaceContainer?.state as EWorkspaceContainerState,
+      },
+      dockerContainerState: state,
+    });
   }
 
   async create(
@@ -73,11 +137,12 @@ export class WorkspaceService {
     data: WorkspaceCreateRequestDto,
   ): Promise<Dto_Workspace_Create> {
     if (!user || !user.id)
-      throw new InternalServerErrorException('ASSERT: No user/user id');
+      throw new InternalServerErrorException('ASSERT: No user');
 
+    const id = randomUUID();
     const workspace = await this.prismaService.workspace.create({
       data: {
-        id: randomUUID(),
+        id: id,
         name: data.name,
         userId: user.id,
       },
@@ -86,19 +151,17 @@ export class WorkspaceService {
     await this.prismaService.workspaceContainer.create({
       data: {
         id: randomUUID(),
-        state: WorkspaceContainerState.WaitingForCreation,
         workspaceId: workspace.id,
+        state: WorkspaceContainerState.WaitingForCreation,
       },
     });
 
-    this.workspaceQueue.add('createContainer', workspace.id);
+    this.workspaceQueue.add('workspace:container:create', workspace.id);
 
     return new Dto_Workspace_Create(workspace);
   }
 
   async power(user: IUser, workspaceId: string, action: 'start' | 'stop') {
-    if (!workspaceId)
-      throw new InternalServerErrorException('ASSERT: No workspace ID');
     if (!user || !user.id)
       throw new InternalServerErrorException('ASSERT: No user');
 
@@ -110,62 +173,122 @@ export class WorkspaceService {
         },
       },
       include: {
-        workspaceContainer: true,
         user: true,
+        workspaceContainer: true,
       },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
-    if (
-      !workspace.workspaceContainer ||
-      !workspace.workspaceContainer.dockerContainerId
-    )
-      throw new BadRequestException('Container not found');
 
-    if (
-      (action == 'start' &&
-        workspace.workspaceContainer.state !=
-          WorkspaceContainerState.Stopped) ||
-      (action == 'stop' &&
-        workspace.workspaceContainer.state != WorkspaceContainerState.Running)
-    )
-      throw new BadRequestException(
-        'This power action cannot be run when container is in its current state',
-      );
-
-    await this.prismaService.workspaceContainer.update({
-      data: {
-        state: {
-          start: WorkspaceContainerState.Starting,
-          stop: WorkspaceContainerState.Stopping,
-        }[action],
-      },
-      where: {
-        id: workspace.workspaceContainer.id,
-      },
-    });
-
-    // TODO: Maybe add into bullmq?
-    const status = await this.dockerService[
-      {
-        start: 'startContainer',
-        stop: 'stopContainer',
-      }[action]
-    ](workspace.workspaceContainer.dockerContainerId);
-
-    await this.prismaService.workspaceContainer.update({
-      data: {
-        state: status,
-      },
-      where: {
-        id: workspace.workspaceContainer.id,
-      },
-    });
+    if (action == 'start')
+      this.workspaceQueue.add('workspace:container:start', workspace.id);
+    else if (action == 'stop')
+      this.workspaceQueue.add('workspace:container:stop', workspace.id);
+    else throw new BadRequestException('Invalid action');
 
     return {};
   }
 
-  async $createContainer(workspaceId: string) {
-    if (!workspaceId) throw new Error('Workspace not found');
+  // --- jobs ---
+  async $workspaceContainerCreate(workspaceId: string) {
+    const workspace = await this._getWorkspaceById(workspaceId);
+
+    await this._setWorkspaceContainerState(
+      workspace.workspaceContainer.id,
+      WorkspaceContainerState.Creating,
+    );
+
+    try {
+      const container = await this.dockerService.createWorkspaceContainer(
+        workspace.id,
+        'fedora42-gnome:latest',
+      );
+
+      await this._setWorkspaceContainerState(
+        workspace.workspaceContainer.id,
+        WorkspaceContainerState.Created,
+      );
+
+      await this.prismaService.workspaceContainer.update({
+        where: {
+          id: workspace.workspaceContainer.id,
+        },
+        data: {
+          dockerContainerId: container.id,
+        },
+      });
+
+      // TODO: Broadcast SSE event
+    } catch (e) {
+      // TODO: Should probably replace with error state
+      await this._setWorkspaceContainerState(
+        workspace.workspaceContainer.id,
+        'WaitingForCreation',
+      );
+
+      throw e;
+    }
+  }
+
+  async $workspaceContainerStart(workspaceId: string) {
+    const workspace = await this._getWorkspaceById(workspaceId);
+    if (
+      !workspace.workspaceContainer.dockerContainerId ||
+      workspace.workspaceContainer.state != WorkspaceContainerState.Created
+    )
+      throw new BadRequestException('Container not ready yet.');
+
+    // Ensure that traefik is connected to the containers network
+    await this.dockerService.ensureTraefikOnWorkspaceNetwork(workspace.id);
+
+    const containerState = await this.dockerService.getContainerState(
+      workspace.workspaceContainer.dockerContainerId,
+    );
+    if (['running', 'starting', 'stopping'].includes(containerState ?? ''))
+      throw new BadRequestException('Container is already running');
+
+    await this.dockerService.startContainer(
+      workspace.workspaceContainer.dockerContainerId,
+    );
+  }
+
+  async $workspaceContainerStop(workspaceId: string) {
+    const workspace = await this._getWorkspaceById(workspaceId);
+    if (
+      !workspace.workspaceContainer.dockerContainerId ||
+      workspace.workspaceContainer.state != WorkspaceContainerState.Created
+    )
+      throw new BadRequestException('Container not ready yet.');
+
+    // TODO: It would maybe be polite to announce it inside of the container
+
+    const containerState = await this.dockerService.getContainerState(
+      workspace.workspaceContainer.dockerContainerId,
+    );
+    if (!['running', 'starting', 'dead'].includes(containerState ?? ''))
+      throw new BadRequestException('Container is not running');
+
+    await this.dockerService.stopContainer(
+      workspace.workspaceContainer.dockerContainerId,
+    );
+  }
+
+  // --- internal ---
+  private async _setWorkspaceContainerState(
+    workspaceContainerId: string,
+    state: WorkspaceContainerState,
+  ) {
+    await this.prismaService.workspaceContainer.update({
+      where: {
+        id: workspaceContainerId,
+      },
+      data: {
+        state: state,
+      },
+    });
+  }
+
+  private async _getWorkspaceById(workspaceId: string) {
+    if (!workspaceId) throw new Error('ASSERT: No workspace');
 
     const workspace = await this.prismaService.workspace.findUnique({
       where: {
@@ -176,32 +299,12 @@ export class WorkspaceService {
         user: true,
       },
     });
-    if (!workspace) throw new Error('Workspace not found');
-    if (!workspace.workspaceContainer)
-      throw new Error('Workspace container not found');
+    if (!workspace || !workspace.workspaceContainer)
+      throw new Error('Workspace not found');
 
-    await this.prismaService.workspaceContainer.update({
-      data: {
-        state: WorkspaceContainerState.Creating,
-      },
-      where: {
-        id: workspace.workspaceContainer.id,
-      },
-    });
-
-    const containerId = await this.dockerService.createWorkspaceContainer(
-      workspace.id,
-      'fedora42-gnome',
-    );
-
-    await this.prismaService.workspaceContainer.update({
-      data: {
-        state: WorkspaceContainerState.Stopped,
-        dockerContainerId: containerId,
-      },
-      where: {
-        id: workspace.workspaceContainer.id,
-      },
-    });
+    return {
+      ...workspace,
+      workspaceContainer: workspace.workspaceContainer!,
+    };
   }
 }

@@ -12,10 +12,7 @@
 export const WorkspaceContainerState = {
   WaitingForCreation: 'WaitingForCreation',
   Creating: 'Creating',
-  Stopped: 'Stopped',
-  Starting: 'Starting',
-  Running: 'Running',
-  Stopping: 'Stopping',
+  Created: 'Created',
   Deleting: 'Deleting',
   Deleted: 'Deleted'
 } as const

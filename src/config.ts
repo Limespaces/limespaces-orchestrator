@@ -4,6 +4,7 @@ export const OrchestratorConfig = {
     process.env.DASHBOARD_ORIGIN ??
     ''
   ).split(','),
+
   oidc: {
     audience: process.env.OIDC_AUDIENCE ?? '',
     issuer: process.env.OIDC_ISSUER ?? '',
@@ -23,5 +24,9 @@ export const OrchestratorConfig = {
     vnc: {
       secret: process.env.VNC_JWT_SECRET ?? '',
     },
+  },
+
+  paths: {
+    hostAppDir: process.env.HOST_APP_DIR ?? '',
   },
 };

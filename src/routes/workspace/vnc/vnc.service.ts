@@ -85,7 +85,7 @@ export class VncService {
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    const targetWs = new WebSocket(`ws://workspace-host:8000`, {
+    const targetWs = new WebSocket(`ws://limespaces-platform-traefik:80`, {
       headers: {
         host: `${workspace.id}.workspace.limespaces.local`,
       },
