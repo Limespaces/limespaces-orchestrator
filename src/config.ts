@@ -18,4 +18,10 @@ export const OrchestratorConfig = {
     port: 6379,
     password: process.env.REDIS_PASSWORD ?? '',
   },
+
+  jwt: {
+    vnc: {
+      secret: process.env.VNC_JWT_SECRET ?? '',
+    },
+  },
 };

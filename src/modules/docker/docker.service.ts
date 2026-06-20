@@ -153,6 +153,7 @@ export class DockerService implements OnApplicationBootstrap {
         Runtime: 'sysbox-runc',
         SecurityOpt: ['seccomp=unconfined'],
         ShmSize: 2000000000,
+        PidsLimit: 100000,
         RestartPolicy: {
           Name: 'no',
         },
