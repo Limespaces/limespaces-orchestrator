@@ -1,6 +1,11 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { WorkspaceService } from './workspace.service';
-import { Dto_Workspace_Create, Dto_Workspace_GetAll, WorkspaceCreateRequestDto } from '@limespaces/shared';
+import {
+  Dto_Workspace_Create,
+  Dto_Workspace_Get,
+  Dto_Workspace_GetAll,
+  WorkspaceCreateRequestDto,
+} from '@limespaces/shared';
 import { JwtAuthGuard } from 'src/common/auth/jwt-auth.guard';
 import { type IUser, User } from 'src/common/user.decorator';
 
@@ -14,11 +19,35 @@ export class WorkspaceController {
     return await this.workspaceService.getAll(user);
   }
 
+  @Get('/:workspaceId')
+  async get(
+    @User() user: IUser,
+    @Param('workspaceId') workspaceId: string,
+  ): Promise<Dto_Workspace_Get> {
+    return await this.workspaceService.get(user, workspaceId);
+  }
+
   @Post()
   async create(
     @User() user: IUser,
     @Body() body: WorkspaceCreateRequestDto,
   ): Promise<Dto_Workspace_Create> {
     return await this.workspaceService.create(user, body);
+  }
+
+  @Post('/:workspaceId/power/start')
+  async start(
+    @User() user: IUser,
+    @Param('workspaceId') workspaceId: string,
+  ): Promise<{}> {
+    return await this.workspaceService.power(user, workspaceId, 'start');
+  }
+
+  @Post('/:workspaceId/power/stop')
+  async stop(
+    @User() user: IUser,
+    @Param('workspaceId') workspaceId: string,
+  ): Promise<{}> {
+    return await this.workspaceService.power(user, workspaceId, 'stop');
   }
 }
