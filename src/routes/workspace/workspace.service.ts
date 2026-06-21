@@ -22,6 +22,7 @@ import { Queue } from 'bullmq';
 import { DockerService } from 'src/modules/docker/docker.service';
 import { Observable } from 'rxjs';
 import { EventsService } from 'src/modules/events/events.service';
+import { SupervisorService } from 'src/modules/supervisor/supervisor.service';
 
 @Injectable()
 export class WorkspaceService implements OnApplicationBootstrap {
@@ -33,6 +34,7 @@ export class WorkspaceService implements OnApplicationBootstrap {
     @InjectQueue('workspace')
     private readonly workspaceQueue: Queue,
     private readonly eventsService: EventsService,
+    private readonly supervisorService: SupervisorService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -219,6 +221,18 @@ export class WorkspaceService implements OnApplicationBootstrap {
     return sseChannel;
   }
 
+  // --- temporary ---
+
+  async testSupervisor(workspaceId: string) {
+    /*console.log(
+      await this.supervisorService.runCommand(workspaceId, 'zenity', [
+        '--info',
+        '--text="This workspace was stopped from the dashboard, shutting down now."',
+        '--title="Shutting down"',
+      ]),
+    );*/
+  }
+
   // --- jobs ---
   async $workspaceContainerCreate(workspaceId: string) {
     const workspace = await this._getWorkspaceById(workspaceId);
@@ -305,7 +319,21 @@ export class WorkspaceService implements OnApplicationBootstrap {
     )
       throw new BadRequestException('Container not ready yet.');
 
-    // TODO: It would maybe be polite to announce it inside of the container
+    // Politely inform the user about the shutdown
+    // they probably won't be quick enough to save anything,
+    // but hey, we are polite.
+    // REMEMBER: We must not await this -- it would block the
+    // shutdown sequence until button is pressed. Also catch all errors
+    // to not stop the sequence.
+
+    this.supervisorService
+      .showDialog(
+        workspace.id,
+        'warning',
+        'Shutting down',
+        'This workspace was stopped from the dashboard. Shutting down in a moment!',
+      )
+      .catch(() => {});
 
     const containerState = await this.dockerService.getContainerState(
       workspace.workspaceContainer.dockerContainerId,

@@ -67,4 +67,12 @@ export class WorkspaceController {
   ): Promise<Observable<MessageEvent>> {
     return await this.workspaceService.events(user, workspaceId);
   }
+
+  @Post('/:workspaceId/supervisor')
+  async testSupervisor(
+    @User() user: IUser,
+    @Param('workspaceId') workspaceId: string,
+  ) {
+    return await this.workspaceService.testSupervisor(workspaceId);
+  }
 }

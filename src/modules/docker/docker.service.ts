@@ -30,6 +30,7 @@ interface IDockerPortBinding {
 interface IDockerPathBinding {
   host: string;
   container: string;
+  readonly?: boolean;
 }
 
 @Injectable()
@@ -272,6 +273,7 @@ export class DockerService implements OnApplicationBootstrap {
             Type: 'bind',
             Source: b.host,
             Target: b.container,
+            ReadOnly: b.readonly ?? false,
           })) ?? [],
         RestartPolicy: {
           Name: 'no',
@@ -285,9 +287,14 @@ export class DockerService implements OnApplicationBootstrap {
       Labels: {
         ...(config.type == 'workspace'
           ? {
-              [`traefik.http.routers.${config.name}-novnc.rule`]: `Host(\`${hostname}\`)`,
-              [`traefik.http.services.${config.name}-novnc.loadbalancer.server.port`]:
+              [`traefik.http.routers.${config.name}-vnc.rule`]: `Host(\`vnc.${hostname}\`)`,
+              [`traefik.http.routers.${config.name}-vnc.service`]: `${config.name}-vnc`,
+              [`traefik.http.services.${config.name}-vnc.loadbalancer.server.port`]:
                 '6901',
+              [`traefik.http.routers.${config.name}-supervisor.rule`]: `Host(\`supervisor.${hostname}\`)`,
+              [`traefik.http.routers.${config.name}-supervisor.service`]: `${config.name}-supervisor`,
+              [`traefik.http.services.${config.name}-supervisor.loadbalancer.server.port`]:
+                '5000',
             }
           : {}),
         'limespaces.managedby': 'limespaces',
@@ -438,6 +445,19 @@ export class DockerService implements OnApplicationBootstrap {
       networkName: networkName,
       imageTag: `${DockerService.PLATFORM_REGISTRY}/limespaces/${imageTag}`,
       type: 'workspace',
+      pathBindings: [
+        // TODO: CRITICAL: Remove this, when not in-dev
+        // Critical security flaw, we should package this into Dockerfile
+        // when building for production
+        {
+          host: path.join(
+            OrchestratorConfig.paths.hostAppDir,
+            'repos/supervisor/bin/limespaces-supervisor',
+          ),
+          container: '/usr/share/bin/limespaces-supervisor',
+          readonly: true,
+        },
+      ],
     });
 
     // Make traefik join the network

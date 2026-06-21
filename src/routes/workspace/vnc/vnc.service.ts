@@ -87,7 +87,7 @@ export class VncService {
 
     const targetWs = new WebSocket(`ws://limespaces-platform-traefik:80`, {
       headers: {
-        host: `${workspace.id}.workspace.limespaces.local`,
+        host: `vnc.${workspace.id}.workspace.limespaces.local`,
       },
     });
 

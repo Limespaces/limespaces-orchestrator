@@ -7,12 +7,14 @@ import { BullModule } from '@nestjs/bullmq';
 import { OrchestratorConfig } from './config';
 import { DockerModule } from './modules/docker/docker.module';
 import { EventsModule } from './modules/events/events.module';
+import { SupervisorModule } from './modules/supervisor/supervisor.module';
 
 @Module({
   imports: [
     PrismaModule,
     DockerModule,
     EventsModule,
+    SupervisorModule,
     BullModule.forRoot({
       connection: {
         host: OrchestratorConfig.redis.host,
