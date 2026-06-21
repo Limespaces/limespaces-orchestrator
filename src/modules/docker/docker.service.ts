@@ -287,6 +287,8 @@ export class DockerService implements OnApplicationBootstrap {
       Labels: {
         ...(config.type == 'workspace'
           ? {
+              'traefik.enable': 'true',
+              'traefik.group': 'limespaces',
               [`traefik.http.routers.${config.name}-vnc.rule`]: `Host(\`vnc.${hostname}\`)`,
               [`traefik.http.routers.${config.name}-vnc.service`]: `${config.name}-vnc`,
               [`traefik.http.services.${config.name}-vnc.loadbalancer.server.port`]:
